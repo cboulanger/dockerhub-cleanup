@@ -1,7 +1,7 @@
 import argparse
 import csv
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import requests
 
@@ -55,7 +55,7 @@ def process_tags(tags, retention_days, global_preserve_last, preserve_rules):
     If preserve_rules is empty, the global_preserve_last value is used.
     Returns a list of tag dictionaries with additional computed fields.
     """
-    pull_cutoff = datetime.utcnow() - timedelta(days=retention_days)
+    pull_cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=retention_days)
     processed = []
     
     # Parse dates once and build a new collection with computed fields.
@@ -180,9 +180,22 @@ def get_backup_data(args, headers):
     else:
         return fetch_backup_data(args, headers)
 
+def get_bearer_token(namespace, pat):
+    """Exchange a Personal Access Token for a bearer token."""
+    login_url = f"{DH_API_BASE}/users/login/"
+    payload = {"username": namespace, "password": pat}
+    # Docker Hub API requires a proper User-Agent header
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "DockerHub-Cleanup-Script/1.0"
+    }
+    response = requests.post(login_url, json=payload, headers=headers)
+    response.raise_for_status()
+    return response.json()["token"]
+
 def main():
     args = parse_args()
-    
+
     # Parse the preservation rules into a dictionary.
     # Expected format: prefix:number (e.g., prod:10 staging:5)
     preserve_rules = {}
@@ -193,7 +206,9 @@ def main():
         else:
             preserve_rules[rule] = None
 
-    headers = {"Authorization": f"Bearer {args.token}"}
+    # Exchange PAT for bearer token
+    bearer_token = get_bearer_token(args.namespace, args.token)
+    headers = {"Authorization": f"Bearer {bearer_token}"}
     
     with open("cleanup_report.csv", "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
